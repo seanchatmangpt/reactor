@@ -245,6 +245,66 @@ defmodule Reactor do
     end
   end
 
+  @doc """
+  Resume a halted Reactor with a replacement result for a completed step.
+
+  When a step returns `{:halt, value}`, Reactor stores that value as the step's
+  intermediate result and returns the halted Reactor. `resume/5` replaces that
+  stored result and continues executing the existing plan with the original
+  inputs.
+
+  This is useful when an application needs to pause a Reactor until some
+  external condition is satisfied. Reactor does not prescribe how that
+  condition is delivered or persisted.
+
+  ## Arguments
+
+  * `reactor` - A halted Reactor.
+  * `step` - The name of a step with a stored intermediate result.
+  * `value` - The replacement result made available to dependent steps.
+  * `context` - Additional context to merge into the Reactor context.
+  * `options` - Options passed to `run/4` when execution resumes.
+  """
+  @spec resume(t, any, any, context_arg, run_options) ::
+          {:ok, any} | {:ok, any, t} | {:error, any} | {:halted, t}
+  def resume(reactor, step, value, context \\ %{}, options \\ [])
+
+  def resume(reactor, _step, _value, _context, _options) when not is_reactor(reactor) do
+    {:error,
+     ArgumentError.exception(
+       message: "`reactor` value `#{inspect(reactor)}` is not a Reactor struct"
+     )}
+  end
+
+  def resume(reactor, _step, _value, _context, _options) when reactor.state != :halted do
+    {:error,
+     StateError.exception(
+       reactor: reactor,
+       state: reactor.state,
+       expected: ~w[halted]a
+     )}
+  end
+
+  def resume(reactor, step, value, context, options) do
+    case Map.fetch(reactor.intermediate_results, step) do
+      {:ok, _current_value} ->
+        inputs = get_in(reactor.context, [:private, :inputs]) || %{}
+
+        reactor = %{
+          reactor
+          | intermediate_results: Map.put(reactor.intermediate_results, step, value)
+        }
+
+        run(reactor, inputs, context, options)
+
+      :error ->
+        {:error,
+         ArgumentError.exception(
+           message: "No intermediate result exists for step `#{inspect(step)}`"
+         )}
+    end
+  end
+
   @undo_options [
     concurrency_key: [
       type: :reference,
