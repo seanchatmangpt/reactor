@@ -66,6 +66,57 @@ defmodule ReactorTest do
     end
   end
 
+  describe "resume/3..5" do
+    defmodule HaltedReactor do
+      @moduledoc false
+      use Reactor
+
+      input :prefix
+
+      step :wait do
+        async? false
+        run(fn _arguments, context -> {:halt, {:waiting, context.run_id}} end)
+      end
+
+      step :continue do
+        async? false
+        argument :prefix, input(:prefix)
+        argument :value, result(:wait)
+
+        run(fn %{prefix: prefix, value: value}, context ->
+          {:ok, {prefix, value, context.run_id}}
+        end)
+      end
+
+      return :continue
+    end
+
+    test "it replaces a halted step result and continues with the original inputs" do
+      assert {:halted, halted} =
+               Reactor.run(HaltedReactor, %{prefix: :original}, %{}, run_id: "resume-run")
+
+      assert halted.intermediate_results.wait == {:waiting, "resume-run"}
+
+      assert {:ok, {:original, :approved, "resume-run"}} =
+               Reactor.resume(halted, :wait, :approved)
+    end
+
+    test "it refuses to resume a reactor which is not halted" do
+      assert {:error, %Reactor.Error.Validation.StateError{}} =
+               Reactor.resume(Builder.new(), :wait, :approved)
+    end
+
+    test "it refuses to replace a result which does not exist" do
+      assert {:halted, halted} =
+               Reactor.run(HaltedReactor, %{prefix: :original}, %{}, run_id: "resume-run")
+
+      assert {:error, %ArgumentError{message: message}} =
+               Reactor.resume(halted, :missing, :approved)
+
+      assert message =~ "No intermediate result exists"
+    end
+  end
+
   describe "undo/2" do
     defmodule UndoableReactor do
       use Reactor
